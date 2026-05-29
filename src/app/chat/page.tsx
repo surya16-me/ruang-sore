@@ -1,22 +1,117 @@
 'use client'
 
-import { useState } from 'react'
-import type { FormEvent, ChangeEvent } from 'react'
+import { useState, useRef, useEffect, Suspense } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { useChat } from '@ai-sdk/react'
+import type { UIMessage } from 'ai'
+import { ChatHeader } from '@/components/chat/chat-header'
 import { ChatWindow } from '@/components/chat/chat-window'
 import { ChatInput } from '@/components/chat/chat-input'
 
-export default function ChatPage() {
-  const { messages, sendMessage, status, stop } = useChat()
+interface DbMessage {
+  id: string
+  role: string
+  content: string
+  created_at: string
+}
+
+function toUIMessage(m: DbMessage): UIMessage {
+  const role = m.role === 'user' ? 'user' : 'assistant'
+  return {
+    id: m.id,
+    role,
+    parts: [{ type: 'text', text: m.content }],
+  }
+}
+
+function ChatPageInner() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const convId = searchParams.get('id')
+
   const [input, setInput] = useState('')
+
+  // Tracks the active conversation ID at time of message send
+  // (separate from URL param to avoid onFinish saving to wrong conversation)
+  const activeConvIdRef = useRef<string | null>(convId)
+
+  const { messages, sendMessage, status, stop, setMessages } = useChat({
+    onFinish: ({ message, isAbort }) => {
+      if (isAbort) return
+      const currentConvId = activeConvIdRef.current
+      if (!currentConvId) return
+
+      const textPart = message.parts.find((p) => p.type === 'text')
+      if (!textPart || textPart.type !== 'text') return
+
+      fetch(`/api/conversations/${currentConvId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'assistant', content: textPart.text }),
+      }).catch((err) => console.error('[chat/page onFinish]', err))
+    },
+  })
+
+  // Load message history when conversation ID changes
+  useEffect(() => {
+    activeConvIdRef.current = convId
+
+    if (!convId) {
+      setMessages([])
+      return
+    }
+
+    let cancelled = false
+    fetch(`/api/conversations/${convId}/messages`)
+      .then((r) => r.json())
+      .then((msgs: DbMessage[]) => {
+        if (!cancelled) setMessages(msgs.map(toUIMessage))
+      })
+      .catch((err) => console.error('[chat/page loadHistory]', err))
+
+    return () => {
+      cancelled = true
+    }
+  }, [convId, setMessages])
 
   const isLoading = status === 'submitted' || status === 'streaming'
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (!input.trim() || isLoading) return
-    sendMessage({ text: input })
+    const text = input.trim()
+    if (!text || isLoading) return
+
     setInput('')
+
+    let currentConvId = convId
+
+    // Create a new conversation if one doesn't exist
+    if (!currentConvId) {
+      try {
+        const res = await fetch('/api/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: text.slice(0, 60) }),
+        })
+        const conv: { id: string } = await res.json()
+        currentConvId = conv.id
+        activeConvIdRef.current = currentConvId
+        router.replace(`/chat?id=${currentConvId}`)
+      } catch (err) {
+        console.error('[chat/page createConv]', err)
+        return
+      }
+    }
+
+    // Persist user message (fire and forget — UI updates via useChat)
+    fetch(`/api/conversations/${currentConvId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'user', content: text }),
+    }).catch((err) => console.error('[chat/page saveUserMsg]', err))
+
+    sendMessage({ text })
   }
 
   function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
@@ -25,20 +120,11 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-10">
-        <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center text-lg select-none">
-          🌇
-        </div>
-        <div>
-          <p className="font-semibold text-sm leading-none">RuangSore</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {isLoading ? 'sedang mengetik...' : 'online'}
-          </p>
-        </div>
-      </header>
-
-      <ChatWindow messages={messages} isLoading={isLoading} />
-
+      <ChatHeader isLoading={isLoading} />
+      <ChatWindow
+        messages={messages}
+        isLoading={isLoading}
+      />
       <ChatInput
         input={input}
         isLoading={isLoading}
@@ -47,5 +133,13 @@ export default function ChatPage() {
         onStop={stop}
       />
     </div>
+  )
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense>
+      <ChatPageInner />
+    </Suspense>
   )
 }

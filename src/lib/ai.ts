@@ -5,6 +5,6 @@ export const openrouter = createOpenAI({
   apiKey: process.env.OPENROUTER_API_KEY!,
 })
 
-export const defaultModel = openrouter(
+export const defaultModel = openrouter.chat(
   process.env.OPENROUTER_MODEL ?? 'openai/gpt-4o-mini'
 )

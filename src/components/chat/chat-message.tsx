@@ -1,5 +1,6 @@
 import type { UIMessage } from 'ai'
 import { cn } from '@/lib/utils'
+import { AgentAvatar } from '@/components/shared/agent-avatar'
 
 interface ChatMessageProps {
   message: UIMessage
@@ -14,11 +15,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
   return (
     <div className={cn('flex items-end gap-3', isUser ? 'justify-end' : 'justify-start')}>
-      {!isUser && (
-        <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-sm shrink-0 select-none">
-          🌇
-        </div>
-      )}
+      {!isUser && <AgentAvatar size="sm" />}
 
       <div
         className={cn(

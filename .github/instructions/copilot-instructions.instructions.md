@@ -26,16 +26,44 @@ kecuali ada instruksi eksplisit.
 - Do not modify `prompts/AGENT.md` without explicit instruction.
 
 ## File Structure
-src/app/api/chat/route.ts   — streaming AI endpoint
-src/app/chat/page.tsx       — main chat page (client component)
-src/components/chat/        — ChatWindow, ChatMessage, ChatInput
-src/components/ui/          — shadcn/ui output, do not edit
-src/lib/ai.ts               — openrouter client config
-src/lib/memory.ts           — trimHistory(), MAX_MESSAGES = 20
-src/lib/utils.ts            — cn() and small helpers
-src/types/index.ts          — all shared TypeScript types
-src/prompts/AGENT.md        — RuangSore system prompt (read-only)
-styles/globals.css          — Tailwind directives only
+src/app/api/chat/route.ts      — streaming AI endpoint
+src/app/chat/page.tsx          — main chat page (client component)
+src/components/shared/         — atoms: reusable across features (AgentAvatar, dll)
+src/components/chat/           — molecules & organisms: chat-specific
+src/components/ui/             — shadcn/ui output, do not edit
+src/lib/ai.ts                  — openrouter client config
+src/lib/memory.ts              — trimHistory(), MAX_MESSAGES = 20
+src/lib/utils.ts               — cn() and small helpers
+src/types/index.ts             — all shared TypeScript types
+prompts/AGENT.md               — RuangSore system prompt (read-only)
+
+## Atomic Design — WAJIB
+Setiap komponen UI harus mengikuti hierarki atomic design:
+
+- **Atom** (`src/components/shared/`)
+  Komponen paling kecil, tidak punya dependensi ke komponen lain.
+  Contoh: AgentAvatar, UserAvatar, IconButton.
+  Satu tanggung jawab, reusable di mana saja.
+
+- **Molecule** (`src/components/chat/` atau folder fitur)
+  Gabungan atom yang punya satu fungsi spesifik.
+  Contoh: TypingIndicator, ChatEmptyState, ChatMessage.
+  Boleh import atom, tidak boleh import organism lain.
+
+- **Organism** (`src/components/chat/` atau folder fitur)
+  Komponen kompleks yang compose molecule + atom.
+  Contoh: ChatWindow, ChatHeader, ChatInput.
+  Boleh import molecule dan atom.
+
+- **Page** (`src/app/**/page.tsx`)
+  Hanya boleh berisi state management dan compose organism.
+  Tidak boleh ada JSX styling/logic di sini — semua didelegasikan.
+
+Aturan:
+- Jangan taruh logika atau styling langsung di page.tsx
+- Kalau komponen pakai emoji/warna/ukuran yang sama di >1 tempat,
+  extract jadi atom terlebih dahulu
+- Nama file: kebab-case. Nama komponen: PascalCase.
 
 ## Code Conventions
 Naming:
@@ -51,6 +79,7 @@ Imports:
 Components:
 - Default to Server Components. Add `'use client'` only when
   state, effects, or browser APIs are needed.
+- Ikuti atomic design hierarchy — lihat bagian Atomic Design di atas.
 
 Error handling:
 - Wrap all AI calls in try/catch inside the route handler.
