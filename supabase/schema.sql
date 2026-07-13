@@ -23,9 +23,19 @@ create table if not exists messages (
   created_at      timestamptz default now() not null
 );
 
+-- Table: mood_entries
+-- Catat mood harian user
+create table if not exists mood_entries (
+  id         uuid        default gen_random_uuid() primary key,
+  user_id    uuid        references auth.users(id) on delete cascade not null,
+  mood       integer     not null check (mood >= 1 and mood <= 4),
+  created_at timestamptz default now() not null
+);
+
 -- Index untuk performa query
 create index if not exists messages_conversation_id_idx on messages(conversation_id);
 create index if not exists conversations_user_id_idx   on conversations(user_id);
+create index if not exists mood_entries_user_id_idx    on mood_entries(user_id);
 
 -- Auto-update updated_at saat ada pesan baru
 create or replace function update_conversation_timestamp()
@@ -47,6 +57,7 @@ create or replace trigger messages_update_conversation
 -- ============================================================
 alter table conversations enable row level security;
 alter table messages      enable row level security;
+alter table mood_entries  enable row level security;
 
 -- Users hanya bisa lihat/ubah/hapus conversation milik sendiri
 create policy "users_own_conversations"
@@ -67,3 +78,9 @@ create policy "users_own_messages"
       select id from conversations where user_id = auth.uid()
     )
   );
+
+-- Users hanya bisa lihat/tambah mood milik sendiri
+create policy "users_own_moods"
+  on mood_entries for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);

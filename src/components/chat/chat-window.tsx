@@ -9,9 +9,10 @@ import { TypingIndicator } from '@/components/chat/typing-indicator'
 interface ChatWindowProps {
   messages: UIMessage[]
   isLoading: boolean
+  onQuickEmotion?: (emotion: string) => void
 }
 
-export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading, onQuickEmotion }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -21,7 +22,7 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
-        {messages.length === 0 && <ChatEmptyState />}
+        {messages.length === 0 && <ChatEmptyState onQuickEmotion={onQuickEmotion ?? (() => {})} />}
 
         {messages.map((message) => (
           <ChatMessage key={message.id} message={message} />

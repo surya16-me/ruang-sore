@@ -16,3 +16,8 @@ export interface Conversation {
   created_at: string
   updated_at: string
 }
+
+export interface MoodEntry {
+  date: string
+  mood: number
+}

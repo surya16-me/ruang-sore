@@ -1,31 +1,17 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { requireUser, verifyConversationOwnership, apiError } from '@/lib/supabase/guard'
 
 type Params = { params: Promise<{ id: string }> }
 
-// GET /api/conversations/[id]/messages — load messages for a conversation
 export async function GET(_req: Request, { params }: Params) {
   const { id } = await params
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { user, error: authErr } = await requireUser(supabase)
+  if (authErr) return authErr
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // Verify ownership via RLS (conversation must belong to user)
-  const { data: conv } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single()
-
-  if (!conv) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
+  const { error: ownerErr } = await verifyConversationOwnership(supabase, id, user.id)
+  if (ownerErr) return ownerErr
 
   const { data, error } = await supabase
     .from('messages')
@@ -33,37 +19,19 @@ export async function GET(_req: Request, { params }: Params) {
     .eq('conversation_id', id)
     .order('created_at', { ascending: true })
 
-  if (error) {
-    console.error('[api/conversations/[id]/messages GET]', error)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
-  }
+  if (error) return apiError(error, 'api/conversations/[id]/messages GET')
 
   return NextResponse.json(data)
 }
 
-// POST /api/conversations/[id]/messages — persist messages after AI responds
 export async function POST(req: Request, { params }: Params) {
   const { id } = await params
   const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { user, error: authErr } = await requireUser(supabase)
+  if (authErr) return authErr
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // Verify ownership
-  const { data: conv } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single()
-
-  if (!conv) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
+  const { error: ownerErr } = await verifyConversationOwnership(supabase, id, user.id)
+  if (ownerErr) return ownerErr
 
   const body = await req.json() as { role: 'user' | 'assistant'; content: string }
   const { role, content } = body
@@ -78,10 +46,7 @@ export async function POST(req: Request, { params }: Params) {
     .select('id, role, content, created_at')
     .single()
 
-  if (error) {
-    console.error('[api/conversations/[id]/messages POST]', error)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
-  }
+  if (error) return apiError(error, 'api/conversations/[id]/messages POST')
 
   return NextResponse.json(data, { status: 201 })
 }

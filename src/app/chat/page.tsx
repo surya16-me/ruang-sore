@@ -5,9 +5,12 @@ import type { ChangeEvent, FormEvent } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useChat } from '@ai-sdk/react'
 import type { UIMessage } from 'ai'
+import { toast } from 'sonner'
 import { ChatHeader } from '@/components/chat/chat-header'
 import { ChatWindow } from '@/components/chat/chat-window'
 import { ChatInput } from '@/components/chat/chat-input'
+import { BreathingGuide } from '@/components/chat/breathing-guide'
+import { MoodPicker } from '@/components/chat/mood-picker'
 
 interface DbMessage {
   id: string
@@ -31,13 +34,13 @@ function ChatPageInner() {
   const convId = searchParams.get('id')
 
   const [input, setInput] = useState('')
+  const [showBreathing, setShowBreathing] = useState(false)
+  const [moodLoggedFor, setMoodLoggedFor] = useState<string | null>(null)
 
-  // Tracks the active conversation ID at time of message send
-  // (separate from URL param to avoid onFinish saving to wrong conversation)
   const activeConvIdRef = useRef<string | null>(convId)
 
   const { messages, sendMessage, status, stop, setMessages } = useChat({
-    onFinish: ({ message, isAbort }) => {
+    onFinish: async ({ message, isAbort }) => {
       if (isAbort) return
       const currentConvId = activeConvIdRef.current
       if (!currentConvId) return
@@ -45,15 +48,22 @@ function ChatPageInner() {
       const textPart = message.parts.find((p) => p.type === 'text')
       if (!textPart || textPart.type !== 'text') return
 
-      fetch(`/api/conversations/${currentConvId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'assistant', content: textPart.text }),
-      }).catch((err) => console.error('[chat/page onFinish]', err))
+      try {
+        const res = await fetch(`/api/conversations/${currentConvId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'assistant', content: textPart.text }),
+        })
+        if (!res.ok) throw new Error(`Save failed: ${res.status}`)
+      } catch (err) {
+        console.error('[chat/page onFinish]', err)
+        toast.error('Gagal menyimpan pesan')
+      }
     },
   })
 
-  // Load message history when conversation ID changes
+  const showMoodPicker = messages.length >= 2 && moodLoggedFor !== convId
+
   useEffect(() => {
     activeConvIdRef.current = convId
 
@@ -63,19 +73,76 @@ function ChatPageInner() {
     }
 
     let cancelled = false
-    fetch(`/api/conversations/${convId}/messages`)
-      .then((r) => r.json())
-      .then((msgs: DbMessage[]) => {
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/conversations/${convId}/messages`)
+        if (!res.ok) throw new Error(`Load failed: ${res.status}`)
+        const msgs: DbMessage[] = await res.json()
         if (!cancelled) setMessages(msgs.map(toUIMessage))
-      })
-      .catch((err) => console.error('[chat/page loadHistory]', err))
+      } catch (err) {
+        console.error('[chat/page loadHistory]', err)
+        toast.error('Gagal memuat riwayat percakapan')
+      }
+    })()
 
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [convId, setMessages])
 
   const isLoading = status === 'submitted' || status === 'streaming'
+
+  async function handleQuickEmotion(emotion: string) {
+    setInput('')
+    let currentConvId = convId
+
+    if (!currentConvId) {
+      try {
+        const res = await fetch('/api/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: emotion }),
+        })
+        if (!res.ok) throw new Error(`Create failed: ${res.status}`)
+        const conv: { id: string } = await res.json()
+        currentConvId = conv.id
+        activeConvIdRef.current = currentConvId
+        router.replace(`/chat?id=${currentConvId}`)
+      } catch (err) {
+        console.error('[chat/page createConv]', err)
+        toast.error('Gagal membuat percakapan baru')
+        return
+      }
+    }
+
+    const text = `Aku lagi merasa ${emotion.toLowerCase()}`
+    try {
+      const res = await fetch(`/api/conversations/${currentConvId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'user', content: text }),
+      })
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`)
+    } catch (err) {
+      console.error('[chat/page saveQuickEmotion]', err)
+      toast.error('Gagal menyimpan pesan')
+      return
+    }
+
+    sendMessage({ text })
+  }
+
+  async function handleMoodSelect(mood: number) {
+    setMoodLoggedFor(convId)
+
+    try {
+      await fetch('/api/mood', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mood }),
+      })
+    } catch (err) {
+      console.error('[chat/page logMood]', err)
+    }
+  }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -86,7 +153,6 @@ function ChatPageInner() {
 
     let currentConvId = convId
 
-    // Create a new conversation if one doesn't exist
     if (!currentConvId) {
       try {
         const res = await fetch('/api/conversations', {
@@ -94,22 +160,30 @@ function ChatPageInner() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: text.slice(0, 60) }),
         })
+        if (!res.ok) throw new Error(`Create failed: ${res.status}`)
         const conv: { id: string } = await res.json()
         currentConvId = conv.id
         activeConvIdRef.current = currentConvId
         router.replace(`/chat?id=${currentConvId}`)
       } catch (err) {
         console.error('[chat/page createConv]', err)
+        toast.error('Gagal membuat percakapan baru')
         return
       }
     }
 
-    // Persist user message (fire and forget — UI updates via useChat)
-    fetch(`/api/conversations/${currentConvId}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'user', content: text }),
-    }).catch((err) => console.error('[chat/page saveUserMsg]', err))
+    try {
+      const res = await fetch(`/api/conversations/${currentConvId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'user', content: text }),
+      })
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`)
+    } catch (err) {
+      console.error('[chat/page saveUserMsg]', err)
+      toast.error('Gagal menyimpan pesan')
+      return
+    }
 
     sendMessage({ text })
   }
@@ -119,12 +193,23 @@ function ChatPageInner() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <ChatHeader isLoading={isLoading} />
+    <div className="flex flex-col h-full relative">
+      <ChatHeader
+        isLoading={isLoading}
+        onBreathingGuide={() => setShowBreathing(true)}
+      />
       <ChatWindow
         messages={messages}
         isLoading={isLoading}
+        onQuickEmotion={handleQuickEmotion}
       />
+
+      {showMoodPicker && messages.length > 0 && (
+        <div className="border-t border-border bg-background px-4 py-2">
+          <MoodPicker onSelect={handleMoodSelect} className="justify-center" />
+        </div>
+      )}
+
       <ChatInput
         input={input}
         isLoading={isLoading}
@@ -132,6 +217,10 @@ function ChatPageInner() {
         onSubmit={handleSubmit}
         onStop={stop}
       />
+
+      {showBreathing && (
+        <BreathingGuide onClose={() => setShowBreathing(false)} />
+      )}
     </div>
   )
 }
